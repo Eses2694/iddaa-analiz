@@ -154,7 +154,6 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
     olasılıklar = [p_ev, p_ber, p_dep]
     en_büyük = max(olasılıklar)
 
-    # Orijinal kodundaki banko / taraf mantığı
     if en_büyük == p_ev:
         ana_tahmin = "Ev Sahibi Kazanır (1)"
         secilen_olasilik = p_ev
@@ -182,14 +181,17 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         en_iyi_ev_skor = int(round(ortalama_gol))
         en_iyi_dep_skor = en_iyi_ev_skor
 
+    # --- VALUE BET BAŞARI OPTİMİZASYONU VE GÜVENLİ KASA YÖNETİMİ ---
     is_value = False
     kelly_yuzde = 0.0
-    if (secilen_olasilik * secilen_oran) > 1.0:
+    # Sınırı 1.0 yerine 1.06 yaparak sadece bahis şirketinin bariz hatalı açtığı en kaliteli value maçları buluyoruz
+    if (secilen_olasilik * secilen_oran) > 1.06:
         is_value = True
         b = secilen_oran - 1
         if b > 0:
-            kelly_yuzde = ((b * secilen_olasilik) - (1 - secilen_olasilik)) / b
-            kelly_yuzde = max(0.0, kelly_yuzde) * 100
+            ham_kelly = ((b * secilen_olasilik) - (1 - secilen_olasilik)) / b
+            # Uzun vadede kasanın korunması için dünyaca ünlü profesyonel "Fractional Kelly (Yarı Kelly)" oranına (%50) geçiyoruz
+            kelly_yuzde = max(0.0, ham_kelly) * 0.5 * 100
 
     is_6_gol = False
     is_iy_ms_ters = False
@@ -207,7 +209,6 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         else:
             en_iyi_ev_skor, en_iyi_dep_skor = 3, 3
 
-    # --- TAMAMEN İLK KODUNDAKİ SÜRPRİZ LİMİTLERİNE GERİ DÖNÜŞ ---
     if abs(p_ev - p_dep) < 0.08 and lig_kaos['kaos_faktoru'] >= 1.15 and (ev_orani >= 2.60 or dep_orani >= 2.60):
         is_iy_ms_ters = True
         durum_notu = "🔄 İY: 2 / MS: 1 (Ters Köşe)" if ev_orani < dep_orani else "🔄 İY: 1 / MS: 2 (Ters Köşe)"
@@ -220,28 +221,25 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         is_duello_kg = True
         durum_notu = "⚽ DÜELLO: İY KG VAR & MS KG VAR"
 
-    # --- GEÇMİŞ HATALARI ÖNLEYEN GERÇEKÇİ ÇIKTI KALİBRASYONU (FORMÜLE DOKUNMADAN) ---
+    # --- SÜREKLİLİK VE ÇIKTI ENTEGRASYONU ---
     gol_tahmini = "2.5 Üst" if p_ust > 0.52 else "2.5 Alt"
     kg_tahmini = "KG Var" if p_kg_var > 0.52 else "KG Yok"
     kombine_tahmin = f"MS {1 if en_büyük == p_ev else (2 if en_büyük == p_dep else 'X')} & {gol_tahmini}"
 
-    # Bielefeld maçı gibi KG VAR olan ama basık skorlu tahminleri (3-0 yerine 3-1) kurtarma filtresi
     if kg_tahmini == "KG Var":
         if en_iyi_ev_skor == 0: en_iyi_ev_skor = 1
         if en_iyi_dep_skor == 0: en_iyi_dep_skor = 1
 
-    # İlk Yarı skorunu ana skorun dağılımına göre çelişkisiz üretme
     en_iyi_iy_ev = max(0, int(np.floor(en_iyi_ev_skor * 0.45)))
     en_iyi_iy_dep = max(0, int(np.floor(en_iyi_dep_skor * 0.45)))
 
-    # Maç sonucu ters köşeyse ilk yarı skorunu mantıksal olarak tam oturt
     if is_iy_ms_ters:
         if ev_orani < dep_orani:
             en_iyi_iy_ev, en_iyi_iy_dep = 0, 1
         else:
             en_iyi_iy_ev, en_iyi_iy_dep = 1, 0
     elif kg_tahmini == "KG Var" and en_iyi_ev_skor >= 2 and en_iyi_dep_skor >= 1 and en_iyi_iy_ev == 0:
-        en_iyi_iy_ev = 1  # 1-0 biten ilk yarıları kusursuz yakalar
+        en_iyi_iy_ev = 1
 
     iy_skor_tahmini = f"{en_iyi_iy_ev} - {en_iyi_iy_dep}"
 
@@ -303,20 +301,20 @@ if not df_ham.empty:
                 st.markdown(f"⏱️ **Hedef Skorlar:** `İlk Yarı: {m['iy_skor']}` | `Maç Sonucu: {m['skor']}`")
                 st.write(f"**Oranlar:** {m['oranlar']} | **Olasılık:** %{m['olasilik']:.1f}")
                 if m['is_value']:
-                    st.success(f"📈 **Value Bet Saptandı!** Önerilen Kasa Yatırımı (Kelly): **%{m['kelly_yuzde']:.2f}**")
+                    st.success(f"📈 **Value Bet Saptandı!** Güvenli Kasa Yatırımı (Yarı-Kelly): **%{m['kelly_yuzde']:.2f}**")
 
     with sk_value:
         st.subheader("💰 Bahis Şirketinin Hatalı Açtığı Değerli Oranlar")
         if list_value_bets:
             for m in list_value_bets:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
-                st.success(f"💎 [{m['lig']}] VALUE MAÇ: {m['mac']}{tarih_eki}")
+                st.success(f"💎 [{m['lig']}] GÜÇLÜ VALUE MAÇ: {m['mac']}{tarih_eki}")
                 with st.expander(f"Kasa Yönetim Detayları: {m['mac']}"):
                     st.write(f"**Yapay Zeka Seçimi:** {m['tahmin']} (%{m['olasilik']:.1f} İhtimal)")
                     st.write(f"**Kombine Öneri:** {m['kombine']} | **Hedef Skor:** {m['skor']}")
                     st.write(f"**Piyasa Oranları:** {m['oranlar']}")
-                    st.info(f"📊 **Kelly Kriteri Tavsiyesi:** Bu maça ana kasanızın **%{m['kelly_yuzde']:.2f}** miktarını ayırmanız optimal kazanç eğrisini sağlar.")
-        else: st.info("Bültende oran/ihtimal dengesizliği yaratan değerli (Value) bahis bulunamadı.")
+                    st.info(f"📊 **Yarı-Kelly Kriteri Tavsiyesi:** Kasa güvenliğiniz ve uzun vadeli kazanç eğriniz için bu maça ana kasanızın en fazla **%{m['kelly_yuzde']:.2f}** miktarını ayırmalısınız.")
+        else: st.info("Bültende oran/ihtimal dengesizliği yaratan yüksek güvenli değerli (Value) bahis bulunamadı.")
 
     with sk_6:
         st.subheader("💣 Global +6 Gol Potansiyeli")
