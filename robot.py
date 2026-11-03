@@ -276,13 +276,11 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
     is_value = False
     kelly_yuzde = 0.0
 
-    # Sınırı 1.06 yaparak sadece bahis şirketinin bariz hatalı açtığı en kaliteli value maçları buluyoruz
     if (secilen_olasilik * secilen_oran) > 1.06:
         is_value = True
         b = secilen_oran - 1
         if b > 0:
             ham_kelly = ((b * secilen_olasilik) - (1 - secilen_olasilik)) / b
-            # Uzun vadede kasanın korunması için dünyaca ünlü profesyonel "Fractional Kelly (Yarı Kelly)" oranına (%50) geçiyoruz
             kelly_yuzde = max(0.0, ham_kelly) * 0.5 * 100
 
     # --- KATEGORİSEL SÜRPRİZ VE DURUM DEDEKTÖRLERİ ---
@@ -313,10 +311,22 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         is_iy_ms_kilit = True
         durum_notu = "🧩 İY: 1 / MS: 0 (Kilit)" if ev_final_xg > dep_final_xg else "🧩 İY: 2 / MS: 0 (Kilit)"
 
-    # 4. Karşılıklı Gol Düellosu Kontrolü
+    # 4. Karşılıklı Gol Düellosu Kontrolü (İki Yarıda da KG Var)
     if p_kg_var > 0.68 and ev_final_xg > 1.60 and dep_final_xg > 1.60:
         is_duello_kg = True
         durum_notu = "⚽ DÜELLO: İY KG VAR & MS KG VAR"
+
+        # 🛠️ Skor Çelişkisi Düzeltmesi: Her iki yarıda da KG çıkması için nihai skorlar minimum 2-2 olmalıdır.
+        if en_iyi_ev_skor < 2:
+            en_iyi_ev_skor = 2
+        if en_iyi_dep_skor < 2:
+            en_iyi_dep_skor = 2
+
+        # Eğer bir tarafın kazanması öngörülüyorsa beraberliği bozacak şekilde skoru yukarı esnet
+        if en_büyük == p_ev and en_iyi_ev_skor == en_iyi_dep_skor:
+            en_iyi_ev_skor += 1
+        elif en_büyük == p_dep and en_iyi_ev_skor == en_iyi_dep_skor:
+            en_iyi_dep_skor += 1
 
     # --- ALT / ÜST VE KG KOMBİNASYON ENTEGRASYONU ---
     gol_tahmini = "2.5 Üst" if p_ust > 0.52 else "2.5 Alt"
@@ -324,23 +334,27 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
     ms_harfi = '1' if en_büyük == p_ev else ('2' if en_büyük == p_dep else 'X')
     kombine_tahmin = f"MS {ms_harfi} & {gol_tahmini}"
 
-    # Karşılıklı gol tahmini var ise skoru kalibre et
-    if kg_tahmini == "KG Var":
+    # Karşılıklı gol tahmini var ise standart sıfır kontrolü
+    if kg_tahmini == "KG Var" and not is_duello_kg:
         if en_iyi_ev_skor == 0:
             en_iyi_ev_skor = 1
         if en_iyi_dep_skor == 0:
             en_iyi_dep_skor = 1
 
     # İlk Yarı (İY) Skor Modellemesi
-    en_iyi_iy_ev = max(0, int(np.floor(en_iyi_ev_skor * 0.45)))
-    en_iyi_iy_dep = max(0, int(np.floor(en_iyi_dep_skor * 0.45)))
+    if is_duello_kg:
+        # İki yarıda da KG var olması için ilk yarı skorunun mutlaka en az 1-1 bitmesi şarttır.
+        en_iyi_iy_ev, en_iyi_iy_dep = 1, 1
+    else:
+        en_iyi_iy_ev = max(0, int(np.floor(en_iyi_ev_skor * 0.45)))
+        en_iyi_iy_dep = max(0, int(np.floor(en_iyi_dep_skor * 0.45)))
 
-    if is_iy_ms_ters:
+    if is_iy_ms_ters and not is_duello_kg:
         if ev_orani < dep_orani:
             en_iyi_iy_ev, en_iyi_iy_dep = 0, 1
         else:
             en_iyi_iy_ev, en_iyi_iy_dep = 1, 0
-    elif kg_tahmini == "KG Var" and en_iyi_ev_skor >= 2 and en_iyi_dep_skor >= 1 and en_iyi_iy_ev == 0:
+    elif kg_tahmini == "KG Var" and en_iyi_ev_skor >= 2 and en_iyi_dep_skor >= 1 and en_iyi_iy_ev == 0 and not is_duello_kg:
         en_iyi_iy_ev = 1
 
     iy_skor_tahmini = f"{en_iyi_iy_ev} - {en_iyi_iy_dep}"
@@ -358,7 +372,7 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
 
 
 # ==============================================================================
-# 🔄 3. ADIM: GÜNCEL MAÇ DÖNGÜSÜ VE SİDEBAR LİG FİLTRESİ (PARÇA A)
+# 🔄 3. ADIM: GÜNCEL MAÇ DÖNGÜSÜ VE SİDEBAR LİG FİLTRESİ (BÖLÜM A)
 # ==============================================================================
 if not df_ham.empty:
     tum_analizler = []
@@ -416,7 +430,7 @@ if not df_ham.empty:
     mevcut_kisa_ligler = sorted(list(set([m['lig'] for m in tum_analizler])))
 
     gosterilecek_lig_isimleri = []
-    ters_sozluk = {}  # Seçilen uzun isimden kısa koda dönmek için
+    ters_sozluk = {}
 
     for kisa_kod in mevcut_kisa_ligler:
         uzun_isim = lig_isimleri_sozlugu.get(kisa_kod, f"Diğer Lig ({kisa_kod})")
@@ -429,7 +443,7 @@ if not df_ham.empty:
         "🏆 Lig Filtresi Seçin",
         options=lig_secenekleri,
         index=0,
-        help="Sadece seçtiğiniz lige ait analizleri ve sürpriz senaryoları görüntüler."
+        help="Sadece seçtiğiniz lige ait analizleri görüntüler."
     )
 
     # Seçilen lige göre filtreleme yap
@@ -441,7 +455,7 @@ if not df_ham.empty:
         aktif_analizler = tum_analizler
         ekran_lig_adi = "🌍 Tüm Ligler"
 
-    # Filtrelenmiş bültene göre kategorisel listeleri doldur
+    # Filtrelenmiş bültene göre listeleri doldur
     list_6_gol = []
     list_iy_ms_ters = []
     list_iy_ms_kilit = []
@@ -460,19 +474,14 @@ if not df_ham.empty:
         if analiz["is_value"]:
             list_value_bets.append(analiz)
     # ==============================================================================
-    # 🔄 3. ADIM: SEKME YAPISI VE GÖRSEL PANEL ÇIKTILARI (PARÇA B)
+    # 🔄 3. ADIM: SEKME YAPISI VE GÖRSEL PANEL ÇIKTILARI (BÖLÜM B)
     # ==============================================================================
-    # Aktif Lig Bilgilendirme Başlığı
+    # Aktif Bilgilendirme Başlığı ve Sekmeler
     st.write(f"### 📊 Filtre Durumu: `{ekran_lig_adi}` ({len(aktif_analizler)} Maç Gösteriliyor)")
 
-    # 🗂️ Şık ve Modern Sekme Yapısı
     sk_tum, sk_value, sk_6, sk_ters, sk_kilit, sk_kg = st.tabs([
-        "📋 Tüm Bülten",
-        "💰 Değerli Bahisler (Value)",
-        "💣 Gol Yağmurları (+6)",
-        "🔄 İY/MS Ters Köşe",
-        "🧩 İY/MS Kilitlenme",
-        "⚽ İki Yarıda KG Var"
+        "📋 Tüm Bülten", "💰 Değerli Bahisler (Value)", "💣 Gol Yağmurları (+6)",
+        "🔄 İY/MS Ters Köşe", "🧩 İY/MS Kilitlenme", "⚽ İki Yarıda KG Var"
     ])
 
     # 📑 SEKME 1: TÜM GLOBAL BÜLTEN
@@ -481,7 +490,6 @@ if not df_ham.empty:
         for m in aktif_analizler:
             tarih_eki = f" [{m['tarih']}]" if m['tarih'] else ""
             uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
             with st.expander(f"🏟️ Lig: {uzun_lig_adi} | {m['mac']}{tarih_eki} — {m['rozet']}"):
                 col_left, col_right = st.columns(2)
                 with col_left:
@@ -493,8 +501,7 @@ if not df_ham.empty:
                     st.markdown(f"💰 **Piyasa Oranları:** `{m['oranlar']}`")
                     st.markdown(f"📈 **Yapay Zeka Güven Olasılığı:** `%{m['olasilik']:.1f}`")
                 if m['is_value']:
-                    st.success(
-                        f"🔥 **Value Bet Saptandı!** Güvenli Kasa Yatırımı (Yarı-Kelly): **%{m['kelly_yuzde']:.2f}**")
+                    st.success(f"🔥 **Value Bet Saptandı!** Güvenli Kasa Yatırımı (Yarı-Kelly): **%{m['kelly_yuzde']:.2f}**")
 
     # 📑 SEKME 2: DEĞERLİ BAHİSLER (VALUE)
     with sk_value:
@@ -503,13 +510,7 @@ if not df_ham.empty:
             for m in list_value_bets:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
-                st.markdown(f"""
-                    <div style='background-color: #e8f5e9; padding: 15px; border-left: 5px solid #2e7d32; border-radius: 6px; margin-bottom: 10px;'>
-                        <b style='color: #1b5e20;'>💎 [{uzun_lig_adi}] GÜÇLÜ VALUE MAÇ:</b> {m['mac']}{tarih_eki}
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.markdown(f"<div style='background-color: #e8f5e9; padding: 15px; border-left: 5px solid #2e7d32; border-radius: 6px; margin-bottom: 10px;'><b style='color: #2e7d32;'>💎 [{uzun_lig_adi}] VALUE MAÇ:</b> {m['mac']}{tarih_eki}</div>", unsafe_allow_html=True)
                 with st.expander(f"🔍 Kasa Yönetim Detayları: {m['mac']}"):
                     c1, c2 = st.columns(2)
                     with c1:
@@ -517,8 +518,7 @@ if not df_ham.empty:
                         st.write(f"**Kombine Öneri:** {m['kombine']} | **Hedef Skor:** {m['skor']}")
                     with c2:
                         st.write(f"**Piyasa Oranları:** {m['oranlar']}")
-                        st.info(
-                            f"📊 **Yarı-Kelly Kriteri Tavsiyesi:** Kasa güvenliğiniz için bu maça ana kasanızın en fazla **%{m['kelly_yuzde']:.2f}** miktarını ayırmalısınız.")
+                        st.info(f"📊 **Yarı-Kelly Kriteri Tavsiyesi:** Bu maça ana kasanızın en fazla **%{m['kelly_yuzde']:.2f}** miktarını ayırmalısınız.")
         else:
             st.info("Seçili filtrede oran/ihtimal dengesizliği yaratan değerli (Value) bahis bulunamadı.")
 
@@ -529,13 +529,7 @@ if not df_ham.empty:
             for m in list_6_gol:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
-                st.markdown(f"""
-                    <div style='background-color: #ffebee; padding: 15px; border-left: 5px solid #c62828; border-radius: 6px; margin-bottom: 10px;'>
-                        <b style='color: #b71c1c;'>🔥 [{uzun_lig_adi}] BOL GOL ADAYI:</b> {m['mac']}{tarih_eki}
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.markdown(f"<div style='background-color: #ffebee; padding: 15px; border-left: 5px solid #c62828; border-radius: 6px; margin-bottom: 10px;'><b style='color: #c62828;'>🔥 [{uzun_lig_adi}] BOL GOL ADAYI:</b> {m['mac']}{tarih_eki}</div>", unsafe_allow_html=True)
                 with st.expander(f"📋 Maç Detayları: {m['mac']}"):
                     st.write(f"**Öngörülen Skor Akışı:** İlk Yarı: `{m['iy_skor']}` ➔ Maç Sonucu: `{m['skor']}`")
                     st.write(f"**Piyasa Oranları:** {m['oranlar']}")
@@ -549,13 +543,7 @@ if not df_ham.empty:
             for m in list_iy_ms_ters:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
-                st.markdown(f"""
-                    <div style='background-color: #fff3e0; padding: 15px; border-left: 5px solid #ef6c00; border-radius: 6px; margin-bottom: 10px;'>
-                        <b style='color: #ef6c00;'>⚡ [{uzun_lig_adi}] TERS KÖŞE (1/2 - 2/1 Adayı):</b> {m['mac']}{tarih_eki}
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.markdown(f"<div style='background-color: #fff3e0; padding: 15px; border-left: 5px solid #ef6c00; border-radius: 6px; margin-bottom: 10px;'><b style='color: #ef6c00;'>⚡ [{uzun_lig_adi}] TERS KÖŞE (1/2 - 2/1 Adayı):</b> {m['mac']}{tarih_eki}</div>", unsafe_allow_html=True)
                 with st.expander(f"🔮 Risk Senaryosu: {m['mac']}"):
                     st.markdown(f"**Yapay Zeka Algoritma Notu:** `{m['ekstra']}`")
                     st.markdown(f"📋 **Tahmini Skor Gelişimi:** İlk Yarı: `{m['iy_skor']}` | Maç Sonucu: `{m['skor']}`")
@@ -570,13 +558,7 @@ if not df_ham.empty:
             for m in list_iy_ms_kilit:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
-                st.markdown(f"""
-                    <div style='background-color: #e1f5fe; padding: 15px; border-left: 5px solid #0277bd; border-radius: 6px; margin-bottom: 10px;'>
-                        <b style='color: #01579b;'>🔒 [{uzun_lig_adi}] KİLİTLENME:</b> {m['mac']}{tarih_eki}
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.markdown(f"<div style='background-color: #e1f5fe; padding: 15px; border-left: 5px solid #0277bd; border-radius: 6px; margin-bottom: 10px;'><b style='color: #0277bd;'>🔒 [{uzun_lig_adi}] KİLİTLENME:</b> {m['mac']}{tarih_eki}</div>", unsafe_allow_html=True)
                 with st.expander(f"🧩 Kapanma Analiz Detayı: {m['mac']}"):
                     st.markdown(f"**Yapay Zeka Tahmini:** `{m['ekstra']}`")
                     st.write(f"**Oranlar:** {m['oranlar']}")
@@ -590,13 +572,7 @@ if not df_ham.empty:
             for m in list_duello_kg:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 uzun_lig_adi = lig_isimleri_sozlugu.get(m['lig'], m['lig'])
-
-                st.markdown(f"""
-                    <div style='background-color: #f3e5f5; padding: 15px; border-left: 5px solid #8e24aa; border-radius: 6px; margin-bottom: 10px;'>
-                        <b style='color: #4a148c;'>🎯 [{uzun_lig_adi}] İKİ YARIDA GOL DÜELLOSU:</b> {m['mac']}{tarih_eki}
-                    </div>
-                """, unsafe_allow_html=True)
-
+                st.markdown(f"<div style='background-color: #f3e5f5; padding: 15px; border-left: 5px solid #8e24aa; border-radius: 6px; margin-bottom: 10px;'><b style='color: #8e24aa;'>🎯 [{uzun_lig_adi}] İKİ YARIDA GOL DÜELLOSU:</b> {m['mac']}{tarih_eki}</div>", unsafe_allow_html=True)
                 with st.expander(f"⚔️ Kombinasyon Detayları: {m['mac']}"):
                     st.write(f"**Beklenen Skor:** {m['skor']} | **Oranlar:** {m['oranlar']}")
         else:
