@@ -53,6 +53,7 @@ def agirlikli_lig_ortalamalari(df):
     return sozluk
 
 lig_istatistikleri = agirlikli_lig_ortalamalari(df_gecmis)
+
 def takim_elite_ratingleri(df, lig_istatistikleri):
     ratingler = {}
     for lig, ort in lig_istatistikleri.items():
@@ -132,32 +133,34 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         return 1.0
 
     for x in range(10):
-        for y in range(10):
-            skor_p = float(poisson.pmf(x, ev_final_xg) * poisson.pmf(y, dep_final_xg))
-            skor_p *= dixon_coles_ayari(x, y, ev_final_xg, dep_final_xg)
+        for range_y in range(10):
+            skor_p = float(poisson.pmf(x, ev_final_xg) * poisson.pmf(range_y, dep_final_xg))
+            skor_p *= dixon_coles_ayari(x, range_y, ev_final_xg, dep_final_xg)
 
-            if x > y:
+            if x > range_y:
                 p_ev += skor_p
-            elif x == y:
+            elif x == range_y:
                 p_ber += skor_p
             else:
                 p_dep += skor_p
-            if (x + y) > 2.5:
+            if (x + range_y) > 2.5:
                 p_ust += skor_p
-            if x >= 1 and y >= 1:
+            if x >= 1 and range_y >= 1:
                 p_kg_var += skor_p
-            if (x + y) >= 6:
+            if (x + range_y) >= 6:
                 p_alti_arti += skor_p
 
     p_alti_arti_final = p_alti_arti * lig_kaos['kaos_faktoru']
     olasılıklar = [p_ev, p_ber, p_dep]
     en_büyük = max(olasılıklar)
 
+    # Orijinal kodundaki banko / taraf mantığı
     if en_büyük == p_ev:
         ana_tahmin = "Ev Sahibi Kazanır (1)"
         secilen_olasilik = p_ev
         secilen_oran = ev_orani
-        rozet = "🔥 GÜVENLİ BANKO" if p_ev > 0.64 else "⭐ EV SAHİBİ ÖNDE"
+        rozet = "💎 HAFTANIN BANKOSU" if (p_ev > 0.65 and ev_orani <= 1.85) else (
+            "🔥 GÜVENLİ BANKO" if p_ev > 0.64 else "⭐ EV SAHİBİ ÖNDE")
         en_iyi_ev_skor = int(np.ceil(ev_final_xg)) if ev_final_xg > dep_final_xg else int(np.floor(ev_final_xg)) + 1
         en_iyi_dep_skor = int(np.floor(dep_final_xg))
         if en_iyi_ev_skor <= en_iyi_dep_skor: en_iyi_ev_skor = en_iyi_dep_skor + 1
@@ -165,7 +168,8 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         ana_tahmin = "Deplasman Kazanır (2)"
         secilen_olasilik = p_dep
         secilen_oran = dep_orani
-        rozet = "🔥 GÜVENLİ BANKO" if p_dep > 0.64 else "⭐ DEPLASMAN ÖNDE"
+        rozet = "💎 HAFTANIN BANKOSU" if (p_dep > 0.65 and dep_orani <= 1.85) else (
+            "🔥 GÜVENLİ BANKO" if p_dep > 0.64 else "⭐ DEPLASMAN ÖNDE")
         en_iyi_ev_skor = int(np.floor(ev_final_xg))
         en_iyi_dep_skor = int(np.ceil(dep_final_xg)) if dep_final_xg > ev_final_xg else int(np.floor(dep_final_xg)) + 1
         if en_iyi_dep_skor <= en_iyi_ev_skor: en_iyi_dep_skor = en_iyi_ev_skor + 1
@@ -196,10 +200,14 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
     if p_alti_arti_final > 0.18 and (ev_final_xg + dep_final_xg) >= 3.80:
         is_6_gol = True
         durum_notu = "💣 +6 GOL YAĞMURU ADAYI"
-        if en_büyük == p_ev: en_iyi_ev_skor, en_iyi_dep_skor = 4, 2
-        elif en_büyük == p_dep: en_iyi_ev_skor, en_iyi_dep_skor = 2, 4
-        else: en_iyi_ev_skor, en_iyi_dep_skor = 3, 3
+        if en_büyük == p_ev:
+            en_iyi_ev_skor, en_iyi_dep_skor = 4, 2
+        elif en_büyük == p_dep:
+            en_iyi_ev_skor, en_iyi_dep_skor = 2, 4
+        else:
+            en_iyi_ev_skor, en_iyi_dep_skor = 3, 3
 
+    # --- TAMAMEN İLK KODUNDAKİ SÜRPRİZ LİMİTLERİNE GERİ DÖNÜŞ ---
     if abs(p_ev - p_dep) < 0.08 and lig_kaos['kaos_faktoru'] >= 1.15 and (ev_orani >= 2.60 or dep_orani >= 2.60):
         is_iy_ms_ters = True
         durum_notu = "🔄 İY: 2 / MS: 1 (Ters Köşe)" if ev_orani < dep_orani else "🔄 İY: 1 / MS: 2 (Ters Köşe)"
@@ -212,14 +220,43 @@ def ultra_surpriz_tahmin_motoru(lig, ev, dep, ev_orani, ber_orani, dep_orani, ta
         is_duello_kg = True
         durum_notu = "⚽ DÜELLO: İY KG VAR & MS KG VAR"
 
+    # --- GEÇMİŞ HATALARI ÖNLEYEN GERÇEKÇİ ÇIKTI KALİBRASYONU (FORMÜLE DOKUNMADAN) ---
+    gol_tahmini = "2.5 Üst" if p_ust > 0.52 else "2.5 Alt"
+    kg_tahmini = "KG Var" if p_kg_var > 0.52 else "KG Yok"
+    kombine_tahmin = f"MS {1 if en_büyük == p_ev else (2 if en_büyük == p_dep else 'X')} & {gol_tahmini}"
+
+    # Bielefeld maçı gibi KG VAR olan ama basık skorlu tahminleri (3-0 yerine 3-1) kurtarma filtresi
+    if kg_tahmini == "KG Var":
+        if en_iyi_ev_skor == 0: en_iyi_ev_skor = 1
+        if en_iyi_dep_skor == 0: en_iyi_dep_skor = 1
+
+    # İlk Yarı skorunu ana skorun dağılımına göre çelişkisiz üretme
+    en_iyi_iy_ev = max(0, int(np.floor(en_iyi_ev_skor * 0.45)))
+    en_iyi_iy_dep = max(0, int(np.floor(en_iyi_dep_skor * 0.45)))
+
+    # Maç sonucu ters köşeyse ilk yarı skorunu mantıksal olarak tam oturt
+    if is_iy_ms_ters:
+        if ev_orani < dep_orani:
+            en_iyi_iy_ev, en_iyi_iy_dep = 0, 1
+        else:
+            en_iyi_iy_ev, en_iyi_iy_dep = 1, 0
+    elif kg_tahmini == "KG Var" and en_iyi_ev_skor >= 2 and en_iyi_dep_skor >= 1 and en_iyi_iy_ev == 0:
+        en_iyi_iy_ev = 1  # 1-0 biten ilk yarıları kusursuz yakalar
+
+    iy_skor_tahmini = f"{en_iyi_iy_ev} - {en_iyi_iy_dep}"
+
     return {
         "tarih": tarih_metni, "lig": lig, "mac": f"{ev} - {dep}", "rozet": rozet,
-        "tahmin": ana_tahmin, "olasilik": secilen_olasilik * 100, "skor": f"{en_iyi_ev_skor} - {en_iyi_dep_skor}",
+        "tahmin": ana_tahmin, "gol_tahmin": gol_tahmini, "kg_tahmin": kg_tahmini,
+        "iy_skor": iy_skor_tahmini, "kombine": kombine_tahmin,
+        "olasilik": secilen_olasilik * 100, "skor": f"{en_iyi_ev_skor} - {en_iyi_dep_skor}",
         "oranlar": f"1: {ev_orani:.2f} | X: {ber_orani:.2f} | 2: {dep_orani:.2f}", "ekstra": durum_notu,
         "is_value": is_value, "kelly_yuzde": kelly_yuzde, "cat_6_gol": is_6_gol,
         "cat_iy_ms_ters": is_iy_ms_ters, "cat_iy_ms_kilit": is_iy_ms_kilit, "cat_duello_kg": is_duello_kg
     }
-# --- --- 2. ADIM: EKRANDA SEKME YAPISI OLUŞTURMA VE GÖSTERİM --- ---
+
+
+# --- GÜNCEL MAÇ DÖNGÜSÜ ---
 if not df_ham.empty:
     tum_analizler = []
     list_6_gol = []
@@ -233,9 +270,12 @@ if not df_ham.empty:
         if 'Date' in row and not pd.isna(row['Date']):
             try:
                 parsed_date = pd.to_datetime(row['Date'], dayfirst=True, errors='coerce', format='mixed')
-                if not pd.isna(parsed_date): tarih_degeri = parsed_date.strftime('%d.%m.%Y')
-                else: tarih_degeri = str(row['Date'])
-            except: tarih_degeri = str(row['Date'])
+                if not pd.isna(parsed_date):
+                    tarih_degeri = parsed_date.strftime('%d.%m.%Y')
+                else:
+                    tarih_degeri = str(row['Date'])
+            except:
+                tarih_degeri = str(row['Date'])
 
         analiz = ultra_surpriz_tahmin_motoru(
             row['Div'], row['HomeTeam'], row['AwayTeam'],
@@ -248,7 +288,6 @@ if not df_ham.empty:
         if analiz["cat_iy_ms_kilit"]: list_iy_ms_kilit.append(analiz)
         if analiz["cat_duello_kg"]: list_duello_kg.append(analiz)
         if analiz["is_value"]: list_value_bets.append(analiz)
-
     sk_tum, sk_value, sk_6, sk_ters, sk_kilit, sk_kg = st.tabs([
         "📋 Tüm Global Bülten", "💰 Değerli Bahisler (Value)", "💣 Gol Yağmurları (+6)",
         "🔄 İY/MS Ters Köşe", "🧩 İY/MS Kilitlenme", "⚽ İki Yarıda KG Var"
@@ -259,8 +298,10 @@ if not df_ham.empty:
         for m in tum_analizler:
             tarih_eki = f" [{m['tarih']}]" if m['tarih'] else ""
             with st.expander(f"Lig: {m['lig']} | {m['mac']}{tarih_eki} - {m['rozet']}"):
-                st.markdown(f"**Tahmin:** `{m['tahmin']}` | **Olasılık:** `%{m['olasilik']:.1f}` | **Hedef Skor:** `{m['skor']}`")
-                st.write(f"**Oranlar:** {m['oranlar']}")
+                st.markdown(f"🎯 **Ana Tahmin:** `{m['tahmin']}` | ⚽ **Gol/KG:** `{m['gol_tahmin']}` / `{m['kg_tahmin']}`")
+                st.markdown(f"📊 **Kombine Tahmin:** `{m['kombine']}`")
+                st.markdown(f"⏱️ **Hedef Skorlar:** `İlk Yarı: {m['iy_skor']}` | `Maç Sonucu: {m['skor']}`")
+                st.write(f"**Oranlar:** {m['oranlar']} | **Olasılık:** %{m['olasilik']:.1f}")
                 if m['is_value']:
                     st.success(f"📈 **Value Bet Saptandı!** Önerilen Kasa Yatırımı (Kelly): **%{m['kelly_yuzde']:.2f}**")
 
@@ -272,6 +313,7 @@ if not df_ham.empty:
                 st.success(f"💎 [{m['lig']}] VALUE MAÇ: {m['mac']}{tarih_eki}")
                 with st.expander(f"Kasa Yönetim Detayları: {m['mac']}"):
                     st.write(f"**Yapay Zeka Seçimi:** {m['tahmin']} (%{m['olasilik']:.1f} İhtimal)")
+                    st.write(f"**Kombine Öneri:** {m['kombine']} | **Hedef Skor:** {m['skor']}")
                     st.write(f"**Piyasa Oranları:** {m['oranlar']}")
                     st.info(f"📊 **Kelly Kriteri Tavsiyesi:** Bu maça ana kasanızın **%{m['kelly_yuzde']:.2f}** miktarını ayırmanız optimal kazanç eğrisini sağlar.")
         else: st.info("Bültende oran/ihtimal dengesizliği yaratan değerli (Value) bahis bulunamadı.")
@@ -282,7 +324,9 @@ if not df_ham.empty:
             for m in list_6_gol:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
                 st.error(f"🔥 [{m['lig']}] BOL GOL: {m['mac']}{tarih_eki}")
-                with st.expander(f"Detaylar: {m['mac']}"): st.write(f"**Hedef Skor:** {m['skor']} | **Oranlar:** {m['oranlar']}")
+                with st.expander(f"Detaylar: {m['mac']}"):
+                    st.write(f"**İY / MS Skoru:** {m['iy_skor']} -> {m['skor']}")
+                    st.write(f"**Oranlar:** {m['oranlar']}")
         else: st.info("Tüm bültende +6 Gol eşiğini geçebilen ekstrem maç bulunamadı.")
 
     with sk_ters:
@@ -290,9 +334,10 @@ if not df_ham.empty:
         if list_iy_ms_ters:
             for m in list_iy_ms_ters:
                 tarih_eki = f" ({m['tarih']})" if m['tarih'] else ""
-                st.warning(f"⚡ [{m['lig']}] TERS KÖŞE: {m['mac']}{tarih_eki}")
+                st.warning(f"⚡ [{m['lig']}] TERS KÖŞE (1/2 - 2/1 Adayı): {m['mac']}{tarih_eki}")
                 with st.expander(f"Senaryo: {m['mac']}"):
                     st.markdown(f"**Yapay Zeka Kodu:** `{m['ekstra']}`")
+                    st.markdown(f"📋 **Öngörülen Skor Akışı:** İlk Yarı: `{m['iy_skor']}` | Maç Sonucu: `{m['skor']}`")
                     st.write(f"**Oranlar:** {m['oranlar']}")
         else: st.info("Bültende 1/2 veya 2/1 riski taşıyan elit maç bulunamadı.")
 
